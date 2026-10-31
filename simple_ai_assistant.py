@@ -13,12 +13,14 @@ client = OpenAI(
 
 messages = []
 
-# messages.append(
-#     {
-#         "role" : "system",
-#         "content" : "Act like a very humble agent and always response under 20 words."
-#     }
-# )
+MAX_STEPS = 5
+
+messages.append(
+    {
+        "role" : "system",
+        "content" : "Act like a very humble agent and always response under 20 words."
+    }
+)
 
 while True: 
 
@@ -34,42 +36,53 @@ while True:
         }
     )
 
-    response = client.chat.completions.create(
-        model=os.getenv("MODEL"),
-        messages=messages,
-        tools=TOOLS,
-    )
+    for step in range(MAX_STEPS):
+        response = client.chat.completions.create(
+            model=os.getenv("MODEL"),
+            messages=messages,
+            tools=TOOLS
+        )
 
-    msg = response.choices[0].message
-    if msg.tool_calls:
+        msg = response.choices[0].message
+
+        if not msg.tool_calls:
+            break
+
         messages.append(msg)
 
         for tool_call in msg.tool_calls:
             func_name = tool_call.function.name
-            func_args = json.loads(tool_call.function.arguments or "{}")
+            func_args = {}
 
-            fn = FUNCTION_NAME_TO_FUNCTION_MAP[func_name]
-            result = fn(**func_args)
+            try:
+                func_args = json.loads(tool_call.function.arguments or "{}")
+                fn = FUNCTION_NAME_TO_FUNCTION_MAP[func_name]
+                result = fn(**func_args)
+            except Exception as e:
+                result = f"Error while running {func_name} : {e}"    
 
             messages.append({
                 "role" : "tool",
-                "tool_id": tool_call.id,
+                "tool_call_id": tool_call.id,
                 "content" : str(result),
             })
-
-        response = client.chat.completions.create(
-            model=os.getenv("MODEL"),
-            messages=messages,
-        )
-
-        msg = response.choices[0].message  
+    else:
+        # In Python, the else block runs only if loop finishes normally without any early break
+        # Ran out of steps
+        fallback = "Sorry, I couldn't finish this within the step limit"
+        messages.append({
+            "role" : "assistant",
+            "content" : fallback
+        })
+        print("Assistant: " + fallback)
+        continue
 
     messages.append(
-            {
-                "role" : "assistant",
-                "content" : msg.content
-            }
-        )
+        {
+            "role" : "assistant",
+            "content" : msg.content
+        }
+    )
 
     print("Assistant: ")
     print(msg.content)
