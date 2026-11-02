@@ -1,8 +1,14 @@
+# Standard Library Imports
+import os
+
+# Third Party Imports
 from openai import OpenAI
 from dotenv import load_dotenv
-from tools import TOOLS, FUNCTION_NAME_TO_FUNCTION_MAP
-import json
-import os
+
+# Local Modules
+from tools import TOOLS, run_tool
+from utils.utils import log
+
 
 load_dotenv()
 
@@ -24,7 +30,7 @@ messages.append(
 
 while True: 
 
-    user_input = input("\nAnshit: ")
+    user_input = input("\n👦🏻 Anshit: ")
 
     if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
         break
@@ -48,19 +54,12 @@ while True:
         if not msg.tool_calls:
             break
 
+        log(f"Step {step + 1}: Model requested {len(msg.tool_calls)} tool calls")
+
         messages.append(msg)
 
         for tool_call in msg.tool_calls:
-            func_name = tool_call.function.name
-            func_args = {}
-
-            try:
-                func_args = json.loads(tool_call.function.arguments or "{}")
-                fn = FUNCTION_NAME_TO_FUNCTION_MAP[func_name]
-                result = fn(**func_args)
-            except Exception as e:
-                result = f"Error while running {func_name} : {e}"    
-
+            result = run_tool(tool_call)
             messages.append({
                 "role" : "tool",
                 "tool_call_id": tool_call.id,
@@ -84,5 +83,4 @@ while True:
         }
     )
 
-    print("Assistant: ")
-    print(msg.content)
+    print("🤖 Assistant: " + (msg.content or ""))
