@@ -1,5 +1,6 @@
 # Standard Library Imports
 import os
+from types import SimpleNamespace
 
 # Third Party Imports
 from openai import OpenAI
@@ -21,12 +22,87 @@ messages = []
 
 MAX_STEPS = 5
 
-messages.append(
-    {
-        "role" : "system",
-        "content" : "Act like a very humble agent and always response under 20 words."
-    }
-)
+# messages.append(
+#     {
+#         "role" : "system",
+#         "content" : "Act like a very humble agent and always response under 20 words."
+#     }
+# )
+
+def stream_chat(history):
+    stream = client.chat.completions.create(
+            model=os.getenv("MODEL"),
+            messages=history,
+            tools=TOOLS,
+            stream=True,
+        )
+
+    full_response = ""
+    calls={}
+    label_printed = False
+
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+
+            delta = chunk.choices[0].delta
+
+            # 1. Content Streaming: Do we have message (context) from the LLM
+            if delta.content:
+                if not label_printed:
+                    print("🤖 Assistant: ", end="", flush=True)
+                    label_printed = True
+                print(delta.content, end="", flush=True)
+                full_response += delta.content    
+
+            # 2. Tool Calls
+            for tc in (delta.tool_calls or []):
+                obj = calls.setdefault(
+                    tc.index,
+                    SimpleNamespace(id=None, function=SimpleNamespace(name="", arguments="")),
+                )
+        
+                if tc.id:
+                    obj.id = tc.id
+        
+                if tc.function and tc.function.name:
+                    obj.function.name += tc.function.name 
+        
+                if tc.function and tc.function.arguments:
+                    obj.function.arguments += tc.function.arguments  
+
+    except KeyboardInterrupt:
+        print("\n {Stopped By You}")  
+        calls={}          
+
+    if label_printed:
+        print() # Move to the next line after the assistant's response
+
+    calls_list = []
+
+    for key in sorted(calls):
+        calls_list.append([calls[key]])
+
+    return full_response, calls_list    
+
+
+def build_tool_calls_payload(tool_calls):
+    # Converts our collected tool calls into dict format that the API expects inside an assistant message
+
+    payload = []
+    for tool_call in tool_calls:
+        tool_call_dict = {
+            "id": tool_call.id,
+            "type": "function",
+            "function": {
+                "name": tool_call.function.name,
+                "arguments": tool_call.function.arguments,
+            } 
+        }
+        payload.append(tool_call_dict)
+
+    return payload    
 
 while True: 
 
@@ -43,22 +119,22 @@ while True:
     )
 
     for step in range(MAX_STEPS):
-        response = client.chat.completions.create(
-            model=os.getenv("MODEL"),
-            messages=messages,
-            tools=TOOLS
-        )
+        full_response, tool_calls = stream_chat(messages)
+        
+        # msg = response.choices[0].message
 
-        msg = response.choices[0].message
-
-        if not msg.tool_calls:
+        if not tool_calls:
             break
 
-        log(f"Step {step + 1}: Model requested {len(msg.tool_calls)} tool calls")
+        log(f"Step {step + 1}: Model requested {len(tool_calls)} tool calls")
 
-        messages.append(msg)
+        messages.append({
+            "role": "assistant",
+            "content": full_response,
+            "tool_calls": build_tool_calls_payload(tool_calls)
+        })
 
-        for tool_call in msg.tool_calls:
+        for tool_call in tool_calls:
             result = run_tool(tool_call)
             messages.append({
                 "role" : "tool",
@@ -75,12 +151,3 @@ while True:
         })
         print("Assistant: " + fallback)
         continue
-
-    messages.append(
-        {
-            "role" : "assistant",
-            "content" : msg.content
-        }
-    )
-
-    print("🤖 Assistant: " + (msg.content or ""))
